@@ -163,7 +163,7 @@ with col2:
 
 # ─── 영수증 분석 함수 ────────────────────────────────────
 def analyze_receipt_with_gemini(image_file):
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.0-flash')
     img = Image.open(image_file)
     prompt = """이 영수증 사진에서 다음 정보를 추출해서 JSON으로만 응답해줘. 다른 텍스트 없이 JSON만.
 {
