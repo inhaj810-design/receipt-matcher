@@ -87,7 +87,7 @@ with col2:
 
 def analyze_receipt_with_gemini(image_file):
     import time, re
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    model = genai.GenerativeModel('gemini-2.5-flash-lite')
     img = Image.open(image_file)
     prompt = """이 영수증 사진에서 다음 정보를 추출해서 JSON으로만 응답해줘. 다른 텍스트 없이 JSON만.
 {
@@ -102,7 +102,7 @@ def analyze_receipt_with_gemini(image_file):
   ]
 }
 items는 영수증에 있는 품목들을 모두 추출해줘. price는 1개당 단가야."""
-    for attempt in range(5):
+    for attempt in range(10):
         try:
             response = model.generate_content([prompt, img])
             text = response.text.strip()
@@ -114,15 +114,16 @@ items는 영수증에 있는 품목들을 모두 추출해줘. price는 1개당 
         except Exception as e:
             err = str(e)
             if "429" in err:
-                wait = 65
-                m = re.search(r"retry_delay \{ seconds: (\d+)", err)
+                wait = 70
+                import re as re2
+                m = re2.search(r"seconds: (\d+)", err)
                 if m:
-                    wait = int(m.group(1)) + 5
-                st.warning(f"  ⏳ API 한도 초과 → {wait}초 대기 후 재시도 ({attempt+1}/5)...")
+                    wait = int(m.group(1)) + 10
+                st.warning(f"  ⏳ API 한도 초과 → {wait}초 대기 후 재시도 ({attempt+1}/10)...")
                 time.sleep(wait)
             else:
                 raise
-    raise Exception("최대 재시도 횟수(5회) 초과")
+    raise Exception("최대 재시도 횟수(10회) 초과 - 잠시 후 다시 시도해주세요")
 
 def has_item_over_10000(info):
     for item in info.get('items', []):
@@ -331,6 +332,9 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
     for i, f in enumerate(sorted_files):
         with st.spinner(f"분석 중: {f.name}"):
             try:
+                import time
+                if i > 0:
+                    time.sleep(4)  # 분당 15회 → 4초 간격으로 여유있게
                 f.seek(0)
                 info = analyze_receipt_with_gemini(f)
                 info['no'] = i + 1
