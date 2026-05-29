@@ -86,6 +86,7 @@ with col2:
 # ─── 함수들 ──────────────────────────────────────────────
 
 def analyze_receipt_with_gemini(image_file):
+    import time, re
     model = genai.GenerativeModel('gemini-2.5-flash')
     img = Image.open(image_file)
     prompt = """이 영수증 사진에서 다음 정보를 추출해서 JSON으로만 응답해줘. 다른 텍스트 없이 JSON만.
@@ -101,13 +102,27 @@ def analyze_receipt_with_gemini(image_file):
   ]
 }
 items는 영수증에 있는 품목들을 모두 추출해줘. price는 1개당 단가야."""
-    response = model.generate_content([prompt, img])
-    text = response.text.strip()
-    if text.startswith("```"):
-        text = text.split("```")[1]
-        if text.startswith("json"):
-            text = text[4:]
-    return json.loads(text.strip())
+    for attempt in range(5):
+        try:
+            response = model.generate_content([prompt, img])
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+            return json.loads(text.strip())
+        except Exception as e:
+            err = str(e)
+            if "429" in err:
+                wait = 65
+                m = re.search(r"retry_delay \{ seconds: (\d+)", err)
+                if m:
+                    wait = int(m.group(1)) + 5
+                st.warning(f"  ⏳ API 한도 초과 → {wait}초 대기 후 재시도 ({attempt+1}/5)...")
+                time.sleep(wait)
+            else:
+                raise
+    raise Exception("최대 재시도 횟수(5회) 초과")
 
 def has_item_over_10000(info):
     for item in info.get('items', []):
