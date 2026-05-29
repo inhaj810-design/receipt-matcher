@@ -5,7 +5,6 @@ from PIL import Image
 import json
 import math
 import io
-import base64
 from datetime import datetime
 from collections import defaultdict
 from openpyxl import Workbook
@@ -18,101 +17,28 @@ st.set_page_config(page_title="영수증 HCP 매칭", page_icon="🧾", layout="
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=DM+Mono:wght@400;500&display=swap');
-
 html, body, [class*="css"] { font-family: 'Noto Sans KR', sans-serif; }
-
-.main { background: #f8f9fc; }
-
 .stApp { background: #f8f9fc; }
-
 .hero {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-    border-radius: 16px;
-    padding: 40px 48px;
-    margin-bottom: 32px;
-    color: white;
-    position: relative;
-    overflow: hidden;
-}
-.hero::before {
-    content: '';
-    position: absolute;
-    top: -50%;
-    right: -10%;
-    width: 400px;
-    height: 400px;
-    background: radial-gradient(circle, rgba(83,166,255,0.15) 0%, transparent 70%);
-    border-radius: 50%;
+    border-radius: 16px; padding: 40px 48px; margin-bottom: 32px;
+    color: white; position: relative; overflow: hidden;
 }
 .hero h1 { font-size: 2rem; font-weight: 700; margin: 0 0 8px 0; letter-spacing: -0.5px; }
 .hero p { font-size: 0.95rem; opacity: 0.7; margin: 0; font-weight: 300; }
-
 .step-card {
-    background: white;
-    border-radius: 12px;
-    padding: 24px;
-    margin-bottom: 16px;
-    border: 1px solid #e8ecf0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    background: white; border-radius: 12px; padding: 24px; margin-bottom: 16px;
+    border: 1px solid #e8ecf0; box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
 .step-num {
-    display: inline-block;
-    background: #0f3460;
-    color: white;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    text-align: center;
-    line-height: 28px;
-    font-size: 13px;
-    font-weight: 700;
-    margin-right: 10px;
-    font-family: 'DM Mono', monospace;
+    display: inline-block; background: #0f3460; color: white;
+    width: 28px; height: 28px; border-radius: 50%; text-align: center;
+    line-height: 28px; font-size: 13px; font-weight: 700; margin-right: 10px;
 }
 .step-title { font-size: 1rem; font-weight: 600; color: #1a1a2e; }
-
-.result-card {
-    background: white;
-    border-radius: 12px;
-    padding: 20px 24px;
-    border-left: 4px solid #0f3460;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    margin-bottom: 12px;
-}
-.tag {
-    display: inline-block;
-    padding: 2px 10px;
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: 500;
-    margin-right: 6px;
-}
-.tag-hospital { background: #e8f0fe; color: #1a73e8; }
-.tag-grade-s { background: #fce8e6; color: #d93025; }
-.tag-grade-a { background: #e6f4ea; color: #137333; }
-.tag-grade-b { background: #fef7e0; color: #b06000; }
-.tag-grade-c { background: #f1f3f4; color: #5f6368; }
-
-.warn-box {
-    background: #fff8e1;
-    border: 1px solid #ffd54f;
-    border-radius: 8px;
-    padding: 12px 16px;
-    font-size: 13px;
-    color: #795548;
-}
-.success-box {
-    background: #e8f5e9;
-    border: 1px solid #a5d6a7;
-    border-radius: 8px;
-    padding: 12px 16px;
-    font-size: 13px;
-    color: #2e7d32;
-}
 </style>
 """, unsafe_allow_html=True)
 
-# ─── HERO ──────────────────────────────────────────────
 st.markdown("""
 <div class="hero">
     <h1>🧾 영수증 HCP 매칭 시스템</h1>
@@ -124,7 +50,6 @@ st.markdown("""
 st.markdown("""<div class="step-card">
 <span class="step-num">1</span><span class="step-title">Gemini API 키 입력</span>
 </div>""", unsafe_allow_html=True)
-
 api_key = st.text_input("Gemini API Key", type="password", placeholder="AIza...")
 if api_key:
     genai.configure(api_key=api_key)
@@ -134,7 +59,6 @@ if api_key:
 st.markdown("""<div class="step-card">
 <span class="step-num">2</span><span class="step-title">매칭 규정 설정</span>
 </div>""", unsafe_allow_html=True)
-
 col1, col2 = st.columns(2)
 with col1:
     min_days = st.number_input("동일 HCP 최소 간격 (일)", min_value=1, max_value=30, value=7)
@@ -145,7 +69,6 @@ with col2:
 st.markdown("""<div class="step-card">
 <span class="step-num">3</span><span class="step-title">파일 업로드</span>
 </div>""", unsafe_allow_html=True)
-
 col1, col2 = st.columns(2)
 with col1:
     receipt_files = st.file_uploader(
@@ -155,7 +78,6 @@ with col1:
     )
     if receipt_files:
         st.info(f"📸 {len(receipt_files)}장 업로드됨")
-
 with col2:
     excel_file = st.file_uploader("방문기록 엑셀", type=["xlsx", "xls"])
     if excel_file:
@@ -168,12 +90,16 @@ def analyze_receipt_with_gemini(image_file):
     prompt = """이 영수증 사진에서 다음 정보를 추출해서 JSON으로만 응답해줘. 다른 텍스트 없이 JSON만.
 {
   "shop_name": "가맹점명 (영수증에 적힌 그대로)",
-  "address": "주소 (있으면)",
+  "address": "주소 (있으면, 없으면 빈 문자열)",
   "date": "YYYY-MM-DD",
   "time": "HH:MM",
-  "amount": 숫자만(원),
-  "approval_number": "승인번호"
-}"""
+  "amount": 총결제금액(숫자만, 원),
+  "approval_number": "승인번호",
+  "items": [
+    {"name": "품목명", "price": 단가(숫자), "qty": 수량(숫자)}
+  ]
+}
+items는 영수증에 있는 품목들을 모두 추출해줘. 단가(price)는 1개당 가격이야."""
     response = model.generate_content([prompt, img])
     text = response.text.strip()
     if text.startswith("```"):
@@ -181,6 +107,18 @@ def analyze_receipt_with_gemini(image_file):
         if text.startswith("json"):
             text = text[4:]
     return json.loads(text.strip())
+
+# ─── 품목 단가 1만원 초과 여부 체크 ──────────────────────
+def has_item_over_10000(receipt_info):
+    items = receipt_info.get('items', [])
+    for item in items:
+        price = item.get('price', 0)
+        try:
+            if float(price) > 10000:
+                return True
+        except:
+            pass
+    return False
 
 # ─── 방문기록 읽기 함수 ──────────────────────────────────
 def load_visit_records(excel_file):
@@ -201,9 +139,8 @@ def load_visit_records(excel_file):
                 })
     return visits
 
-# ─── 병원 매핑 함수 (주소/가맹점명 기반) ─────────────────
+# ─── 병원 매핑 함수 ──────────────────────────────────────
 def guess_hospital(shop_name, address, date, visit_dates_hospitals):
-    """가맹점명과 주소로 근처 병원 추측"""
     keywords = {
         '안동성소': ['안동성소병원'],
         '안동병원': ['의료법인안동병원'],
@@ -221,11 +158,8 @@ def guess_hospital(shop_name, address, date, visit_dates_hospitals):
     for kw, hospitals in keywords.items():
         if kw in text:
             return hospitals
-
-    # 주소에서 지역 파악
     if address:
         if '안동' in address:
-            # 안동에서 해당 날짜 방문한 병원
             visited = visit_dates_hospitals.get(date, [])
             andong = [h for h in visited if '안동' in h]
             if andong:
@@ -237,11 +171,8 @@ def guess_hospital(shop_name, address, date, visit_dates_hospitals):
             daegu = [h for h in visited if '대구' in h or '계명' in h or '칠곡' in h or '곽' in h]
             if daegu:
                 return daegu
-
-    # 해당 날짜 방문한 모든 병원 반환
     return visit_dates_hospitals.get(date, [])
 
-# ─── 인원수 계산 ─────────────────────────────────────────
 def calc_persons(amount):
     return math.ceil(amount / 10000)
 
@@ -274,8 +205,20 @@ def match_hcp(receipts, visits, min_days, max_per_month):
     for r in receipts:
         date = r['date']
         n = r['persons']
+
+        # ★ 품목 단가 1만원 초과 → 참석자 명단 서명 필요
+        if r.get('need_sign', False):
+            results.append({
+                'No': r['no'], '승인일자': date, '시간': r['time'],
+                '가맹점': r['shop_name'], '주소': r.get('address', ''),
+                '승인금액': r['amount'], '선정인원': '-', '실배정': '-',
+                '병원': '-', 'HCP': '참석자 명단 서명 필요',
+                '진료과': '', '등급': '', '비고': '⚠ 품목 단가 1만원 초과 (별도 지출보고서)'
+            })
+            continue
+
         hospitals = r.get('hospitals') or guess_hospital(
-            r.get('shop_name',''), r.get('address',''), date, visit_dates_hospitals)
+            r.get('shop_name', ''), r.get('address', ''), date, visit_dates_hospitals)
 
         candidates = []
         for hosp in (hospitals or []):
@@ -297,7 +240,7 @@ def match_hcp(receipts, visits, min_days, max_per_month):
             for idx, (hosp, v) in enumerate(selected):
                 results.append({
                     'No': r['no'], '승인일자': date, '시간': r['time'],
-                    '가맹점': r['shop_name'], '주소': r.get('address',''),
+                    '가맹점': r['shop_name'], '주소': r.get('address', ''),
                     '승인금액': r['amount'], '선정인원': n, '실배정': len(selected),
                     '병원': hosp, 'HCP': v['HCP'], '진료과': v['진료과'], '등급': v['등급'],
                     '비고': warn if idx == 0 else ''
@@ -305,7 +248,7 @@ def match_hcp(receipts, visits, min_days, max_per_month):
         else:
             results.append({
                 'No': r['no'], '승인일자': date, '시간': r['time'],
-                '가맹점': r['shop_name'], '주소': r.get('address',''),
+                '가맹점': r['shop_name'], '주소': r.get('address', ''),
                 '승인금액': r['amount'], '선정인원': n, '실배정': 0,
                 '병원': ', '.join(hospitals or ['미확인']),
                 'HCP': '(매칭 없음)', '진료과': '', '등급': '', '비고': warn or '⚠ HCP 없음'
@@ -320,6 +263,7 @@ def make_excel(results):
     hf = Font(name='Malgun Gothic', bold=True, color='FFFFFF', size=10)
     hfill = PatternFill('solid', start_color='1a1a2e')
     wfill = PatternFill('solid', start_color='FFF8E1')
+    sfill = PatternFill('solid', start_color='FCE8E6')  # 서명필요 = 연빨강
     fills = [PatternFill('solid', start_color='FFFFFF'),
              PatternFill('solid', start_color='EEF2FA')]
     c = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -327,7 +271,7 @@ def make_excel(results):
     thin = Side(style='thin', color='CCCCCC')
     bd = Border(left=thin, right=thin, top=thin, bottom=thin)
     headers = ['No','승인일자','시간','가맹점','주소','승인금액','선정인원','실배정','병원','HCP','진료과','등급','비고']
-    widths =  [5,   13,      8,    24,    28,    12,      9,       9,      22,    10,    12,    8,    28]
+    widths =  [5,   13,      8,    24,    28,    12,      9,       9,      22,    16,    12,    8,    32]
     for ci, (h, w) in enumerate(zip(headers, widths), 1):
         cell = ws.cell(row=1, column=ci, value=h)
         cell.font = hf; cell.fill = hfill; cell.alignment = c; cell.border = bd
@@ -336,16 +280,21 @@ def make_excel(results):
     for r in results:
         if r['No'] != prev_no:
             ci_toggle = (ci_toggle + 1) % 2; prev_no = r['No']
-        fill = wfill if r['비고'] else fills[ci_toggle]
+        is_sign = r['HCP'] == '참석자 명단 서명 필요'
+        fill = sfill if is_sign else (wfill if r['비고'] else fills[ci_toggle])
         vals = [r['No'],r['승인일자'],r['시간'],r['가맹점'],r['주소'],
                 r['승인금액'],r['선정인원'],r['실배정'],r['병원'],r['HCP'],r['진료과'],r['등급'],r['비고']]
         for ci, val in enumerate(vals, 1):
             cell = ws.cell(row=rn, column=ci, value=val)
             cell.fill = fill; cell.border = bd
-            cell.font = Font(name='Malgun Gothic', size=10)
+            cell.font = Font(name='Malgun Gothic', size=10,
+                             bold=True if (is_sign and ci == 10) else False,
+                             color='C0392B' if (is_sign and ci == 10) else '000000')
             cell.alignment = c if ci in [1,2,3,6,7,8,12] else l
-            if ci == 6: cell.number_format = '#,##0'
-        if ws.cell(row=rn, column=12).value in ['S','A1','A2']:
+            if ci == 6:
+                try: cell.number_format = '#,##0'
+                except: pass
+        if not is_sign and ws.cell(row=rn, column=12).value in ['S','A1','A2']:
             ws.cell(row=rn, column=12).font = Font(name='Malgun Gothic', size=10, bold=True, color='0f3460')
         rn += 1
     ws.freeze_panes = 'A2'
@@ -388,17 +337,23 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
     # 영수증 분석
     st.write("**영수증 분석 중...**")
     receipt_data = []
+    # 파일명 기준 정렬
     sorted_files = sorted(receipt_files, key=lambda f: f.name)
     prog = st.progress(0)
+
     for i, f in enumerate(sorted_files):
         with st.spinner(f"분석 중: {f.name}"):
             try:
                 f.seek(0)
                 info = analyze_receipt_with_gemini(f)
                 info['no'] = i + 1
+                info['original_filename'] = f.name
                 info['persons'] = calc_persons(info.get('amount', 0))
+                # ★ 품목 단가 1만원 초과 체크
+                info['need_sign'] = has_item_over_10000(info)
+                sign_msg = " 🔴 서명필요(단가1만원초과)" if info['need_sign'] else ""
                 receipt_data.append(info)
-                st.write(f"  ✅ {f.name} → {info.get('shop_name','')} / {info.get('amount',0):,}원 / {info.get('persons',0)}명")
+                st.write(f"  ✅ {f.name} → {info.get('shop_name','')} / {info.get('amount',0):,}원 / {info.get('persons',0)}명{sign_msg}")
             except Exception as e:
                 st.warning(f"  ⚠ {f.name} 분석 실패: {e}")
         prog.progress((i+1)/len(sorted_files))
@@ -413,7 +368,8 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
         results = match_hcp(receipt_data, visits, min_days, max_per_month)
 
     # 결과 표시
-    st.success(f"✅ 총 {len(results)}건 매칭 완료")
+    sign_count = sum(1 for r in results if r['HCP'] == '참석자 명단 서명 필요')
+    st.success(f"✅ 총 {len(results)}건 처리 완료 (서명필요: {sign_count}건)")
     df_result = pd.DataFrame(results)
     st.dataframe(df_result, use_container_width=True)
 
@@ -423,22 +379,80 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
                        file_name="HCP_매칭결과.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # 영수증 합본 이미지
+    # ─── 영수증 합본 이미지 & 개별 파일명 변경 ──────────────
     st.write("**영수증 합본 이미지 생성 중...**")
-    pil_images = []
-    for f in sorted_files:
-        f.seek(0)
-        pil_images.append(Image.open(f).convert('RGB'))
 
+    # receipt_data를 날짜+시간 정렬된 순서로 파일도 재정렬
+    # original_filename으로 sorted_files 매핑
+    file_map = {f.name: f for f in sorted_files}
+    sorted_receipt_data = sorted(receipt_data, key=lambda x: (x.get('date',''), x.get('time','')))
+
+    pil_images = []
+    renamed_files = []  # (새파일명, PIL Image) 리스트
+
+    for r in sorted_receipt_data:
+        fname = r.get('original_filename', '')
+        f = file_map.get(fname)
+        if f:
+            f.seek(0)
+            img = Image.open(f).convert('RGB')
+            pil_images.append(img)
+
+            # ★ 개별 파일명: "5.22 15:15 영수증.jpg"
+            date_str = r.get('date', '')
+            time_str = r.get('time', '')
+            try:
+                d = datetime.strptime(date_str, '%Y-%m-%d')
+                date_label = f"{d.month}.{d.day}"
+            except:
+                date_label = date_str
+            # 시간 콜론은 파일명에 사용 불가 → 그대로 사용 (윈도우 불가이므로 . 으로 대체)
+            time_label = time_str.replace(':', '.')
+            new_name = f"{date_label} {time_label} 영수증.jpg"
+            renamed_files.append((new_name, img))
+
+    # 개별 파일 다운로드 버튼
+    st.write("**📎 개별 영수증 (날짜·시간 파일명)**")
+    cols_ui = st.columns(5)
+    for idx, (new_name, img) in enumerate(renamed_files):
+        buf = io.BytesIO()
+        img.save(buf, 'JPEG', quality=90)
+        buf.seek(0)
+        with cols_ui[idx % 5]:
+            st.download_button(
+                label=new_name,
+                data=buf,
+                file_name=new_name,
+                mime="image/jpeg",
+                key=f"img_{idx}"
+            )
+
+    # ★ 합본 이미지: 10장씩, 파일명은 배치 내 가장 최근 날짜 기준 "5.22 증빙건.png"
     for batch_idx in range(0, len(pil_images), 10):
-        batch = pil_images[batch_idx:batch_idx+10]
-        collage = make_collage(batch)
+        batch_imgs = pil_images[batch_idx:batch_idx+10]
+        batch_data = sorted_receipt_data[batch_idx:batch_idx+10]
+
+        # 배치 내 가장 최근 날짜
+        dates_in_batch = [r.get('date','') for r in batch_data if r.get('date','')]
+        if dates_in_batch:
+            latest_date_str = max(dates_in_batch)
+            try:
+                ld = datetime.strptime(latest_date_str, '%Y-%m-%d')
+                collage_name = f"{ld.month}.{ld.day} 증빙건.png"
+            except:
+                collage_name = f"증빙건_{batch_idx//10+1}.png"
+        else:
+            collage_name = f"증빙건_{batch_idx//10+1}.png"
+
+        collage = make_collage(batch_imgs)
         buf = io.BytesIO()
         collage.save(buf, 'PNG')
         buf.seek(0)
-        st.image(collage, caption=f"합본 {batch_idx//10 + 1}", use_column_width=True)
+        st.image(collage, caption=collage_name, use_column_width=True)
         st.download_button(
-            f"📥 합본 이미지 {batch_idx//10 + 1} 다운로드",
-            buf, file_name=f"영수증_합본_{batch_idx//10+1}.png",
-            mime="image/png"
+            f"📥 {collage_name} 다운로드",
+            buf,
+            file_name=collage_name,
+            mime="image/png",
+            key=f"collage_{batch_idx}"
         )
