@@ -6,6 +6,8 @@ import json
 import math
 import io
 import zipfile
+import time
+import re
 from datetime import datetime
 from collections import defaultdict
 from openpyxl import Workbook
@@ -83,10 +85,71 @@ with col2:
     if excel_file:
         st.info(f"📊 {excel_file.name} 업로드됨")
 
-# ─── 함수들 ──────────────────────────────────────────────
+# ─── 품목별 진료과 매핑 ──────────────────────────────────
+PRODUCT_DEPT = {
+    '오구멘틴':      ['이비인후과', '소아청소년과', '외과', '감염내과', '호흡기내과'],
+    '클래리시드 정주': ['감염내과', '호흡기내과', '소아청소년과'],
+    '호의주':        ['소화기내과'],
+    '호이판':        ['소화기내과'],
+    '원알파':        ['신장내과', '내분비내과', '유방갑상선외과', '갑상선외과', '내분비외과'],
+    '이솦틴':        ['심장내과'],
+    '카라듀오':      ['소화기내과'],
+    '피에젯타':      ['순환기내과', '심장내과', '내분비내과'],
+}
 
+def get_product_for_dept(dept):
+    """진료과로 가능한 품목 리스트 반환"""
+    products = []
+    for prod, depts in PRODUCT_DEPT.items():
+        if any(d in dept for d in depts):
+            products.append(prod)
+    return products
+
+def select_best_product(candidates, n):
+    """
+    후보 HCP 목록에서 n명을 같은 품목으로 묶을 수 있는 최적 품목 선택
+    - 같은 품목 가능한 HCP가 n명 이상이면 그 품목 선택
+    - 없으면 가장 많은 HCP를 묶을 수 있는 품목 선택
+    반환: (품목명, 해당 품목 가능한 후보 리스트)
+    """
+    product_candidates = defaultdict(list)
+    for hosp, v in candidates:
+        dept = v.get('진료과', '')
+        prods = get_product_for_dept(dept)
+        for prod in prods:
+            product_candidates[prod].append((hosp, v))
+
+    if not product_candidates:
+        return None, []
+
+    # n명 이상 묶을 수 있는 품목 중 등급 높은 HCP 많은 순
+    best_product = None
+    best_list = []
+    best_count = 0
+
+    for prod, cands in product_candidates.items():
+        cnt = len(cands)
+        if cnt >= n:
+            # n명 충족 → 바로 선택 (등급순 정렬 후 앞에서 n명)
+            if best_product is None or cnt > best_count:
+                best_product = prod
+                best_list = cands
+                best_count = cnt
+
+    if best_product:
+        return best_product, best_list
+
+    # n명 충족 못하면 가장 많은 품목
+    for prod, cands in sorted(product_candidates.items(), key=lambda x: -len(x[1])):
+        if len(cands) > best_count:
+            best_product = prod
+            best_list = cands
+            best_count = len(cands)
+
+    return best_product, best_list
+
+# ─── 영수증 분석 함수 ────────────────────────────────────
 def analyze_receipt_with_gemini(image_file):
-    import time, re
     model = genai.GenerativeModel('gemini-2.5-flash-lite')
     img = Image.open(image_file)
     prompt = """이 영수증 사진에서 다음 정보를 추출해서 JSON으로만 응답해줘. 다른 텍스트 없이 JSON만.
@@ -102,6 +165,7 @@ def analyze_receipt_with_gemini(image_file):
   ]
 }
 items는 영수증에 있는 품목들을 모두 추출해줘. price는 1개당 단가야."""
+
     for attempt in range(10):
         try:
             response = model.generate_content([prompt, img])
@@ -115,15 +179,14 @@ items는 영수증에 있는 품목들을 모두 추출해줘. price는 1개당 
             err = str(e)
             if "429" in err:
                 wait = 70
-                import re as re2
-                m = re2.search(r"seconds: (\d+)", err)
+                m = re.search(r"seconds: (\d+)", err)
                 if m:
                     wait = int(m.group(1)) + 10
                 st.warning(f"  ⏳ API 한도 초과 → {wait}초 대기 후 재시도 ({attempt+1}/10)...")
                 time.sleep(wait)
             else:
                 raise
-    raise Exception("최대 재시도 횟수(10회) 초과 - 잠시 후 다시 시도해주세요")
+    raise Exception("최대 재시도 횟수(10회) 초과")
 
 def has_item_over_10000(info):
     for item in info.get('items', []):
@@ -177,6 +240,7 @@ def guess_hospital(shop_name, address, date, vdh):
 def calc_persons(amount):
     return math.ceil(amount / 10000)
 
+# ─── HCP 매칭 ────────────────────────────────────────────
 def match_hcp(receipts, visits, min_days, max_per_month):
     grade_order = {'S':0,'A1':1,'A2':2,'B1':3,'B2':4,'B3':5,'C1':6,'C2':7,'D1':8,'D2':9}
     def gk(v): return grade_order.get(v['등급'], 99)
@@ -207,88 +271,110 @@ def match_hcp(receipts, visits, min_days, max_per_month):
         if r.get('need_sign'):
             results.append({
                 'No': r['no'], '승인일자': date, '시간': r['time'],
-                '가맹점': r['shop_name'], '주소': r.get('address',''),
-                '승인금액': r['amount'], '선정인원': '-', '실배정': '-',
-                '병원': '-', 'HCP': '참석자 명단 서명 필요',
-                '진료과': '', '등급': '', '비고': '⚠ 품목 단가 1만원 초과 (별도 지출보고서)'
+                '병원': '-', '품목': '-', 'HCP': '참석자 명단 서명 필요',
+                '진료과': '', '가맹점': r['shop_name'], '주소': r.get('address',''),
+                '승인금액': r['amount'], '선정인원': '-',
+                '비고': '⚠ 품목 단가 1만원 초과 (별도 지출보고서)'
             })
             continue
 
-        hospitals = r.get('hospitals') or guess_hospital(r.get('shop_name',''), r.get('address',''), date, vdh)
-        candidates = []
+        hospitals = r.get('hospitals') or guess_hospital(
+            r.get('shop_name',''), r.get('address',''), date, vdh)
+
+        # 전체 후보 수집 (7일/월4회 가능한 HCP만)
+        all_candidates = []
         for hosp in (hospitals or []):
             for c in vbdh.get((date, hosp), []):
-                candidates.append((hosp, c))
-        candidates.sort(key=lambda x: gk(x[1]))
+                if can_assign(c['HCP'], date):
+                    all_candidates.append((hosp, c))
+        all_candidates.sort(key=lambda x: gk(x[1]))
 
+        # 최적 품목 선택 (n명을 같은 품목으로 묶기)
+        best_product, prod_candidates = select_best_product(all_candidates, n)
+
+        # 품목 후보에서 등급순 n명 선택
+        prod_candidates.sort(key=lambda x: gk(x[1]))
         selected = []
-        for hosp, v in candidates:
+        for hosp, v in prod_candidates:
             if len(selected) >= n: break
-            if can_assign(v['HCP'], date):
-                selected.append((hosp, v))
-                hcp_dates[v['HCP']].append(datetime.strptime(date, '%Y-%m-%d'))
+            selected.append((hosp, v))
+            hcp_dates[v['HCP']].append(datetime.strptime(date, '%Y-%m-%d'))
 
-        warn = f'⚠ {n}명 필요 / {len(selected)}명 배정' if len(selected) < n else ''
+        shortage = n - len(selected)
+        warn = f'⚠ {n}명 필요 / {len(selected)}명 배정 (품목 해당 HCP 부족)' if shortage > 0 else ''
+        if not best_product:
+            warn = '⚠ 매칭 가능한 품목/HCP 없음'
+
         if selected:
             for idx, (hosp, v) in enumerate(selected):
                 results.append({
                     'No': r['no'], '승인일자': date, '시간': r['time'],
+                    '병원': hosp, '품목': best_product or '-',
+                    'HCP': v['HCP'], '진료과': v['진료과'],
                     '가맹점': r['shop_name'], '주소': r.get('address',''),
-                    '승인금액': r['amount'], '선정인원': n, '실배정': len(selected),
-                    '병원': hosp, 'HCP': v['HCP'], '진료과': v['진료과'], '등급': v['등급'],
+                    '승인금액': r['amount'], '선정인원': n,
                     '비고': warn if idx == 0 else ''
                 })
         else:
             results.append({
                 'No': r['no'], '승인일자': date, '시간': r['time'],
-                '가맹점': r['shop_name'], '주소': r.get('address',''),
-                '승인금액': r['amount'], '선정인원': n, '실배정': 0,
                 '병원': ', '.join(hospitals or ['미확인']),
-                'HCP': '(매칭 없음)', '진료과': '', '등급': '', '비고': warn or '⚠ HCP 없음'
+                '품목': best_product or '-', 'HCP': '(매칭 없음)',
+                '진료과': '', '가맹점': r['shop_name'], '주소': r.get('address',''),
+                '승인금액': r['amount'], '선정인원': n,
+                '비고': warn or '⚠ HCP 없음'
             })
     return results
 
+# ─── 엑셀 생성 ───────────────────────────────────────────
 def make_excel(results):
     wb = Workbook(); ws = wb.active; ws.title = '매칭결과'
-    hf   = Font(name='Malgun Gothic', bold=True, color='FFFFFF', size=10)
+    hf    = Font(name='Malgun Gothic', bold=True, color='FFFFFF', size=10)
     hfill = PatternFill('solid', start_color='1a1a2e')
     sfill = PatternFill('solid', start_color='FCE8E6')
     wfill = PatternFill('solid', start_color='FFF8E1')
-    fills = [PatternFill('solid', start_color='FFFFFF'), PatternFill('solid', start_color='EEF2FA')]
-    ca = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    la = Alignment(horizontal='left',   vertical='center', wrap_text=True)
+    fills = [PatternFill('solid', start_color='FFFFFF'),
+             PatternFill('solid', start_color='EEF2FA')]
+    ca  = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    la  = Alignment(horizontal='left',   vertical='center', wrap_text=True)
     thin = Side(style='thin', color='CCCCCC')
     bd   = Border(left=thin, right=thin, top=thin, bottom=thin)
-    headers = ['No','승인일자','시간','가맹점','주소','승인금액','선정인원','실배정','병원','HCP','진료과','등급','비고']
-    widths  = [5,   13,      8,    24,    28,    12,      9,       9,      22,    16,    12,    8,    32]
+
+    headers = ['No','승인일자','시간','병원','품목','HCP','진료과','가맹점','주소','승인금액','선정인원','비고']
+    widths  = [5,   13,      8,    24,    14,    12,    12,    22,    26,    12,      9,       32]
+
     for ci,(h,w) in enumerate(zip(headers,widths),1):
         cell = ws.cell(row=1,column=ci,value=h)
         cell.font=hf; cell.fill=hfill; cell.alignment=ca; cell.border=bd
         ws.column_dimensions[get_column_letter(ci)].width=w
+
     tog=0; prev=None; rn=2
     for r in results:
         if r['No']!=prev: tog=(tog+1)%2; prev=r['No']
         is_sign = r['HCP']=='참석자 명단 서명 필요'
         fill = sfill if is_sign else (wfill if r['비고'] else fills[tog])
-        vals = [r['No'],r['승인일자'],r['시간'],r['가맹점'],r['주소'],
-                r['승인금액'],r['선정인원'],r['실배정'],r['병원'],r['HCP'],r['진료과'],r['등급'],r['비고']]
+
+        vals = [r['No'],r['승인일자'],r['시간'],r['병원'],r['품목'],
+                r['HCP'],r['진료과'],r['가맹점'],r['주소'],
+                r['승인금액'],r['선정인원'],r['비고']]
+
         for ci,val in enumerate(vals,1):
             cell = ws.cell(row=rn,column=ci,value=val)
             cell.fill=fill; cell.border=bd
-            cell.font=Font(name='Malgun Gothic',size=10,
-                           bold=is_sign and ci==10,
-                           color='C0392B' if (is_sign and ci==10) else '000000')
-            cell.alignment = ca if ci in [1,2,3,6,7,8,12] else la
-            if ci==6:
+            cell.font=Font(name='Malgun Gothic', size=10,
+                           bold=is_sign and ci==6,
+                           color='C0392B' if (is_sign and ci==6) else '000000')
+            cell.alignment = ca if ci in [1,2,3,10,11] else la
+            if ci==10:
                 try: cell.number_format='#,##0'
                 except: pass
-        if not is_sign and ws.cell(row=rn,column=12).value in ['S','A1','A2']:
-            ws.cell(row=rn,column=12).font=Font(name='Malgun Gothic',size=10,bold=True,color='0f3460')
         rn+=1
+
     ws.freeze_panes='A2'
     buf=io.BytesIO(); wb.save(buf); buf.seek(0)
     return buf
 
+# ─── 영수증 합본 이미지 ───────────────────────────────────
 def make_collage(images, cols=5):
     THUMB_W=500; GAP=8; BG=(235,237,242)
     rows=math.ceil(len(images)/cols)
@@ -332,9 +418,8 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
     for i, f in enumerate(sorted_files):
         with st.spinner(f"분석 중: {f.name}"):
             try:
-                import time
                 if i > 0:
-                    time.sleep(4)  # 분당 15회 → 4초 간격으로 여유있게
+                    time.sleep(4)
                 f.seek(0)
                 info = analyze_receipt_with_gemini(f)
                 info['no'] = i + 1
@@ -366,7 +451,7 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
     sorted_rd = sorted(receipt_data, key=lambda x: (x.get('date',''), x.get('time','')))
 
     pil_images = []
-    renamed = []  # (새파일명, PIL Image)
+    renamed = []
 
     for r in sorted_rd:
         f = file_map.get(r.get('original_filename',''))
@@ -378,43 +463,34 @@ if st.button("🚀 매칭 시작", type="primary", use_container_width=True,
             new_name = f"{date_label(r.get('date',''))} {time_label} 영수증.jpg"
             renamed.append((new_name, img))
 
-    # ZIP에 모든 파일 담기
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
-
         # 1) 매칭 결과 엑셀
         excel_buf = make_excel(results)
         zf.writestr("HCP_매칭결과.xlsx", excel_buf.read())
 
-        # 2) 개별 영수증 (날짜·시간 파일명)
+        # 2) 개별 영수증
         for new_name, img in renamed:
             ibuf = io.BytesIO()
             img.save(ibuf, 'JPEG', quality=90)
             zf.writestr(f"영수증/{new_name}", ibuf.getvalue())
 
-        # 3) 합본 이미지 (10장씩, 최근 날짜 파일명)
+        # 3) 합본 이미지 (10장씩)
         for batch_idx in range(0, len(pil_images), 10):
             batch_imgs = pil_images[batch_idx:batch_idx+10]
             batch_rd   = sorted_rd[batch_idx:batch_idx+10]
             dates = [r.get('date','') for r in batch_rd if r.get('date','')]
-            if dates:
-                latest = max(dates)
-                cname = f"{date_label(latest)} 증빙건.png"
-            else:
-                cname = f"증빙건_{batch_idx//10+1}.png"
-
+            cname = f"{date_label(max(dates))} 증빙건.png" if dates else f"증빙건_{batch_idx//10+1}.png"
             collage = make_collage(batch_imgs)
             cbuf = io.BytesIO()
             collage.save(cbuf, 'PNG')
             zf.writestr(f"합본/{cname}", cbuf.getvalue())
 
     zip_buf.seek(0)
-
-    # 최근 날짜로 ZIP 파일명 결정
     all_dates = [r.get('date','') for r in sorted_rd if r.get('date','')]
     zip_name = f"{date_label(max(all_dates))} 증빙자료.zip" if all_dates else "증빙자료.zip"
 
-    st.success("✅ ZIP 생성 완료! 아래 버튼을 눌러 다운로드하세요.")
+    st.success("✅ ZIP 생성 완료!")
     st.download_button(
         label=f"📥 {zip_name} 다운로드",
         data=zip_buf,
